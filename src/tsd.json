@@ -16,6 +16,9 @@
     },
     "mocha/mocha.d.ts": {
       "commit": "ec3ddd75c4eeeee72e7670db90abea54cd6fe82a"
+    },
+    "levelup/levelup.d.ts": {
+      "commit": "a59cec35c61820b421d31ae91f9f02cad41ed197"
     }
   }
 }
