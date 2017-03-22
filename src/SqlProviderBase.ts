@@ -495,30 +495,52 @@ class SqlStore implements NoSqlProvider.DbStore {
         // Empty
     }
 
+    // this function should be used to guard all transaction functions which could throw an error.
+    // As otherwise throw will break a transaction instead of the single query
+    // and it will be hard to figure out what happend
+    private _guard<T>(func: () => SyncTasks.Promise<T>): SyncTasks.Promise<T> {
+        try {
+            return func();
+        } catch (e) {
+            return SyncTasks.Rejected(e);
+        }
+    }
+
     get<T>(key: any | any[]): SyncTasks.Promise<T> {
-        let joinedKey = NoSqlProviderUtils.serializeKeyToString(key, this._schema.primaryKeyPath);
-        return this._trans.internal_getResultFromQuery<T>('SELECT nsp_data FROM ' + this._schema.name + ' WHERE nsp_pk = ?', [joinedKey]);
+        return this._guard(() => {
+            const joinedKey = NoSqlProviderUtils.serializeKeyToString(key, this._schema.primaryKeyPath);
+            return this._trans.internal_getResultFromQuery('SELECT nsp_data FROM ' + this._schema.name + ' WHERE nsp_pk = ?', [joinedKey]);
+        });
+        
     }
 
     getMultiple<T>(keyOrKeys: any | any[]): SyncTasks.Promise<T[]> {
-        let joinedKeys = NoSqlProviderUtils.formListOfSerializedKeys(keyOrKeys, this._schema.primaryKeyPath);
+        return this._guard(() => {
+            let joinedKeys = NoSqlProviderUtils.formListOfSerializedKeys(keyOrKeys, this._schema.primaryKeyPath);
 
-        if (joinedKeys.length === 0) {
-            return SyncTasks.Resolved<T[]>([]);
-        }
+            if (joinedKeys.length === 0) {
+                return SyncTasks.Resolved<T[]>([]);
+            }
 
-        var qmarks: string[] = Array(joinedKeys.length);
-        for (let i = 0; i < joinedKeys.length; i++) {
-            qmarks[i] = '?';
-        }
+            var qmarks: string[] = Array(joinedKeys.length);
+            for (let i = 0; i < joinedKeys.length; i++) {
+                qmarks[i] = '?';
+            }
 
-        return this._trans.internal_getResultsFromQuery<T>('SELECT nsp_data FROM ' + this._schema.name + ' WHERE nsp_pk IN (' +
-            qmarks.join(',') + ')', joinedKeys);
+            return this._trans.internal_getResultsFromQuery<T>('SELECT nsp_data FROM ' + this._schema.name + ' WHERE nsp_pk IN (' +
+                qmarks.join(',') + ')', joinedKeys);
+        });
     }
 
     private static _unicodeFixer = new RegExp('[\u2028\u2029]', 'g');
 
     put(itemOrItems: any | any[]): SyncTasks.Promise<void> {
+        return this._guard(() => {
+            return this._put(itemOrItems);
+        });
+    }
+
+    private _put(itemOrItems: any | any[]): SyncTasks.Promise<void> {
         let items = NoSqlProviderUtils.arrayify(itemOrItems);
 
         if (items.length === 0) {
@@ -615,6 +637,12 @@ class SqlStore implements NoSqlProvider.DbStore {
     }
 
     remove(keyOrKeys: any | any[]): SyncTasks.Promise<void> {
+             return this._guard(() => {
+            return this._remove(keyOrKeys);
+        });
+    }
+
+    _remove(keyOrKeys: any | any[]): SyncTasks.Promise<void> {
         let joinedKeys = NoSqlProviderUtils.formListOfSerializedKeys(keyOrKeys, this._schema.primaryKeyPath);
 
         // PERF: This is optimizable, but it's of questionable utility
@@ -654,12 +682,14 @@ class SqlStore implements NoSqlProvider.DbStore {
     }
 
     clearAllData(): SyncTasks.Promise<void> {
-        var queries = _.chain(this._schema.indexes).filter(index => index.multiEntry).map(index =>
+        return this._guard(() => {
+            const queries = _.chain(this._schema.indexes).filter(index => index.multiEntry).map(index =>
             this._trans.internal_nonQuery('DELETE FROM ' + this._schema.name + '_' + index.name)).value();
 
-        queries.push(this._trans.internal_nonQuery('DELETE FROM ' + this._schema.name));
+            queries.push(this._trans.internal_nonQuery('DELETE FROM ' + this._schema.name));
 
-        return SyncTasks.all(queries).then(_.noop);
+            return SyncTasks.all(queries).then(_.noop);
+        });
     }
 }
 
